@@ -213,6 +213,13 @@ func (m *Mongo) RoundTrip(msg *Message, tags []string) (_ *Message, err error) {
 		}
 	}
 
+	// Handle killCursors commands - remove killed cursors from cache
+	if killCursorIDs := msg.Op.KillCursorIDs(); len(killCursorIDs) > 0 {
+		for _, cursorID := range killCursorIDs {
+			m.cursors.remove(cursorID, collection)
+		}
+	}
+
 	if transactionDetails != nil {
 		if transactionDetails.IsStartTransaction {
 			m.transactions.add(transactionDetails.LsID, server)

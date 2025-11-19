@@ -2,6 +2,7 @@ package mongo
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -22,6 +23,13 @@ type TransactionDetails struct {
 	IsStartTransaction bool
 }
 
+// ClientInfo contains metadata about the connecting client
+type ClientInfo struct {
+	AppName       string
+	DriverName    string
+	DriverVersion string
+}
+
 type Operation interface {
 	fmt.Stringer
 	OpCode() wiremessage.OpCode
@@ -33,6 +41,8 @@ type Operation interface {
 	Unacknowledged() bool
 	CommandAndCollection() (Command, string)
 	TransactionDetails() *TransactionDetails
+	ClientInfo() *ClientInfo
+	KillCursorIDs() []int64
 }
 
 // see https://github.com/mongodb/mongo-go-driver/blob/v1.7.2/x/mongo/driver/operation.go#L1361-L1426
@@ -85,6 +95,10 @@ func (o *opUnknown) TransactionDetails() *TransactionDetails {
 	return nil
 }
 
+func (o *opUnknown) ClientInfo() *ClientInfo {
+	return nil
+}
+
 func (o *opUnknown) OpCode() wiremessage.OpCode {
 	return o.opCode
 }
@@ -121,6 +135,10 @@ func (o *opUnknown) String() string {
 	return fmt.Sprintf("{ OpUnknown opCode: %d, wm: %s }", o.opCode, o.wm)
 }
 
+func (o *opUnknown) KillCursorIDs() []int64 {
+	return nil
+}
+
 // https://docs.mongodb.com/manual/reference/mongodb-wire-protocol/#wire-op-query
 type opQuery struct {
 	reqID                int32
@@ -133,6 +151,31 @@ type opQuery struct {
 }
 
 func (q *opQuery) TransactionDetails() *TransactionDetails {
+	return nil
+}
+
+func (q *opQuery) ClientInfo() *ClientInfo {
+	info := &ClientInfo{}
+
+	// Extract application name from query.client.application.name
+	if appName, ok := q.query.Lookup("client", "application", "name").StringValueOK(); ok {
+		info.AppName = appName
+	}
+
+	// Extract driver name from query.client.driver.name
+	if driverName, ok := q.query.Lookup("client", "driver", "name").StringValueOK(); ok {
+		info.DriverName = driverName
+	}
+
+	// Extract driver version from query.client.driver.version
+	if driverVersion, ok := q.query.Lookup("client", "driver", "version").StringValueOK(); ok {
+		info.DriverVersion = driverVersion
+	}
+
+	// Return if we found any client info
+	if info.AppName != "" || info.DriverName != "" {
+		return info
+	}
 	return nil
 }
 
@@ -228,6 +271,10 @@ func (q *opQuery) CommandAndCollection() (Command, string) {
 
 func (q *opQuery) String() string {
 	return fmt.Sprintf("{ OpQuery flags: %s, fullCollectionName: %s, numberToSkip: %d, numberToReturn: %d, query: %s, returnFieldsSelector: %s }", q.flags.String(), q.fullCollectionName, q.numberToSkip, q.numberToReturn, q.query.String(), q.returnFieldsSelector.String())
+}
+
+func (q *opQuery) KillCursorIDs() []int64 {
+	return nil
 }
 
 // https://docs.mongodb.com/manual/reference/mongodb-wire-protocol/#op-msg
@@ -423,7 +470,7 @@ func (m *opMsg) Error() error {
 	if !ok {
 		return nil
 	}
-	return driver.ExtractErrorFromServerResponse(single.msg)
+	return driver.ExtractErrorFromServerResponse(context.Background(), single.msg)
 }
 
 func (m *opMsg) Unacknowledged() bool {
@@ -477,12 +524,76 @@ func (m *opMsg) TransactionDetails() *TransactionDetails {
 	return nil
 }
 
+func (m *opMsg) ClientInfo() *ClientInfo {
+	for _, section := range m.sections {
+		if single, ok := section.(*opMsgSectionSingle); ok {
+			info := &ClientInfo{}
+
+			// Extract application name - try both paths
+			if appName, ok := single.msg.Lookup("client", "application", "name").StringValueOK(); ok {
+				info.AppName = appName
+			}
+
+			// Extract driver name
+			if driverName, ok := single.msg.Lookup("client", "driver", "name").StringValueOK(); ok {
+				info.DriverName = driverName
+			}
+
+			// Extract driver version
+			if driverVersion, ok := single.msg.Lookup("client", "driver", "version").StringValueOK(); ok {
+				info.DriverVersion = driverVersion
+			}
+
+			// Return if we found any client info
+			if info.AppName != "" || info.DriverName != "" {
+				return info
+			}
+		}
+	}
+	return nil
+}
+
 func (m *opMsg) String() string {
 	var sections []string
 	for _, section := range m.sections {
 		sections = append(sections, section.String())
 	}
 	return fmt.Sprintf("{ OpMsg flags: %d, sections: [%s], checksum: %d }", m.flags, strings.Join(sections, ", "), m.checksum)
+}
+
+func (m *opMsg) KillCursorIDs() []int64 {
+	// Check if this is a killCursors command
+	command, _ := m.CommandAndCollection()
+	if command != KillCursors {
+		return nil
+	}
+
+	// Extract cursor IDs from the "cursors" array
+	for _, section := range m.sections {
+		if single, ok := section.(*opMsgSectionSingle); ok {
+			cursorsArray, ok := single.msg.Lookup("cursors").ArrayOK()
+			if !ok {
+				continue
+			}
+
+			var cursorIDs []int64
+			values, err := cursorsArray.Values()
+			if err != nil {
+				continue
+			}
+
+			for _, val := range values {
+				if cursorID, ok := val.Int64OK(); ok {
+					cursorIDs = append(cursorIDs, cursorID)
+				}
+			}
+
+			if len(cursorIDs) > 0 {
+				return cursorIDs
+			}
+		}
+	}
+	return nil
 }
 
 // https://docs.mongodb.com/manual/reference/mongodb-wire-protocol/#op-reply
@@ -496,6 +607,10 @@ type opReply struct {
 }
 
 func (r *opReply) TransactionDetails() *TransactionDetails {
+	return nil
+}
+
+func (r *opReply) ClientInfo() *ClientInfo {
 	return nil
 }
 
@@ -569,7 +684,7 @@ func (r *opReply) Error() error {
 	if len(r.documents) == 0 {
 		return nil
 	}
-	return driver.ExtractErrorFromServerResponse(r.documents[0])
+	return driver.ExtractErrorFromServerResponse(context.Background(), r.documents[0])
 }
 
 func (r *opReply) Unacknowledged() bool {
@@ -588,6 +703,10 @@ func (r *opReply) String() string {
 	return fmt.Sprintf("{ OpReply flags: %d, cursorID: %d, startingFrom: %d, numReturned: %d, documents: [%s] }", r.flags, r.cursorID, r.startingFrom, r.numReturned, strings.Join(documents, ", "))
 }
 
+func (r *opReply) KillCursorIDs() []int64 {
+	return nil
+}
+
 // https://docs.mongodb.com/manual/reference/mongodb-wire-protocol/#op-get-more
 type opGetMore struct {
 	reqID              int32
@@ -597,6 +716,10 @@ type opGetMore struct {
 }
 
 func (g *opGetMore) TransactionDetails() *TransactionDetails {
+	return nil
+}
+
+func (g *opGetMore) ClientInfo() *ClientInfo {
 	return nil
 }
 
@@ -676,6 +799,10 @@ func (g *opGetMore) String() string {
 	return fmt.Sprintf("{ OpGetMore fullCollectionName: %s, numberToReturn: %d, cursorID: %d }", g.fullCollectionName, g.numberToReturn, g.cursorID)
 }
 
+func (g *opGetMore) KillCursorIDs() []int64 {
+	return nil
+}
+
 // https://docs.mongodb.com/manual/reference/mongodb-wire-protocol/#op_update
 type opUpdate struct {
 	reqID              int32
@@ -686,6 +813,10 @@ type opUpdate struct {
 }
 
 func (u *opUpdate) TransactionDetails() *TransactionDetails {
+	return nil
+}
+
+func (u *opUpdate) ClientInfo() *ClientInfo {
 	return nil
 }
 
@@ -761,6 +892,10 @@ func (u *opUpdate) String() string {
 	return fmt.Sprintf("{ OpQuery fullCollectionName: %s, flags: %d, selector: %s, update: %s }", u.fullCollectionName, u.flags, u.selector.String(), u.update.String())
 }
 
+func (u *opUpdate) KillCursorIDs() []int64 {
+	return nil
+}
+
 // https://docs.mongodb.com/manual/reference/mongodb-wire-protocol/#op_insert
 type opInsert struct {
 	reqID              int32
@@ -770,6 +905,10 @@ type opInsert struct {
 }
 
 func (i *opInsert) TransactionDetails() *TransactionDetails {
+	return nil
+}
+
+func (i *opInsert) ClientInfo() *ClientInfo {
 	return nil
 }
 
@@ -845,6 +984,10 @@ func (i *opInsert) String() string {
 	return fmt.Sprintf("{ OpInsert flags: %d, fullCollectionName: %s, documents: %s }", i.flags, i.fullCollectionName, strings.Join(documents, ", "))
 }
 
+func (i *opInsert) KillCursorIDs() []int64 {
+	return nil
+}
+
 // https://docs.mongodb.com/manual/reference/mongodb-wire-protocol/#op_insert
 type opDelete struct {
 	reqID              int32
@@ -854,6 +997,10 @@ type opDelete struct {
 }
 
 func (d *opDelete) TransactionDetails() *TransactionDetails {
+	return nil
+}
+
+func (d *opDelete) ClientInfo() *ClientInfo {
 	return nil
 }
 
@@ -928,6 +1075,10 @@ func (d *opDelete) String() string {
 	return fmt.Sprintf("{ OpDelete fullCollectionName: %s, flags: %d, selector: %s }", d.fullCollectionName, d.flags, d.selector.String())
 }
 
+func (d *opDelete) KillCursorIDs() []int64 {
+	return nil
+}
+
 // https://docs.mongodb.com/manual/reference/mongodb-wire-protocol/#op_kill_cursors
 type opKillCursors struct {
 	reqID     int32
@@ -935,6 +1086,10 @@ type opKillCursors struct {
 }
 
 func (k *opKillCursors) TransactionDetails() *TransactionDetails {
+	return nil
+}
+
+func (k *opKillCursors) ClientInfo() *ClientInfo {
 	return nil
 }
 
@@ -1004,6 +1159,10 @@ func (k *opKillCursors) CommandAndCollection() (Command, string) {
 
 func (k *opKillCursors) String() string {
 	return fmt.Sprintf("{ OpKillCursors cursorIDs: %v }", k.cursorIDs)
+}
+
+func (k *opKillCursors) KillCursorIDs() []int64 {
+	return k.cursorIDs
 }
 
 func appendi32(dst []byte, i32 int32) []byte {
