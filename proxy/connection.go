@@ -24,6 +24,11 @@ type connection struct {
 
 	mongoLookup MongoLookup
 	dynamic     *Dynamic
+
+	// Client metadata from isMaster handshake
+	appName       string
+	driverName    string
+	driverVersion string
 }
 
 func handleConnection(log *zap.Logger, sd *statsd.Client, address string, conn net.Conn, mongoLookup MongoLookup, dynamic *Dynamic, kill chan interface{}) {
@@ -48,6 +53,23 @@ func handleConnection(log *zap.Logger, sd *statsd.Client, address string, conn n
 }
 
 func (c *connection) processMessages() {
+	defer func() {
+		// Emit disconnect metric if we had client info
+		if c.appName != "" || c.driverName != "" {
+			clientTags := []string{}
+			if c.appName != "" {
+				clientTags = append(clientTags, fmt.Sprintf("app_name:%s", c.appName))
+			}
+			if c.driverName != "" {
+				clientTags = append(clientTags, fmt.Sprintf("driver_name:%s", c.driverName))
+			}
+			if c.driverVersion != "" {
+				clientTags = append(clientTags, fmt.Sprintf("driver_version:%s", c.driverVersion))
+			}
+			_ = c.statsd.Incr("client_disconnection", clientTags, 1)
+		}
+	}()
+
 	for {
 		err := c.handleMessage()
 		if err != nil {
@@ -85,6 +107,47 @@ func (c *connection) handleMessage() (err error) {
 	isMaster := op.IsIsMaster()
 	command, collection := op.CommandAndCollection()
 	unacknowledged := op.Unacknowledged()
+
+	// Extract client info from isMaster handshake
+	if isMaster {
+		clientInfo := op.ClientInfo()
+		c.log.Debug("isMaster client info check",
+			zap.Bool("has_info", clientInfo != nil),
+			zap.Int("request_size", len(wm)),
+			zap.String("op_string", op.String()),
+		)
+		if clientInfo != nil {
+			if clientInfo.AppName != "" {
+				c.appName = clientInfo.AppName
+			}
+			if clientInfo.DriverName != "" {
+				c.driverName = clientInfo.DriverName
+			}
+			if clientInfo.DriverVersion != "" {
+				c.driverVersion = clientInfo.DriverVersion
+			}
+
+			// Emit client connection metric
+			clientTags := []string{}
+			if c.appName != "" {
+				clientTags = append(clientTags, fmt.Sprintf("app_name:%s", c.appName))
+			}
+			if c.driverName != "" {
+				clientTags = append(clientTags, fmt.Sprintf("driver_name:%s", c.driverName))
+			}
+			if c.driverVersion != "" {
+				clientTags = append(clientTags, fmt.Sprintf("driver_version:%s", c.driverVersion))
+			}
+			_ = c.statsd.Incr("client_connection", clientTags, 1)
+
+			c.log.Info("Client connected",
+				zap.String("app_name", c.appName),
+				zap.String("driver_name", c.driverName),
+				zap.String("driver_version", c.driverVersion),
+			)
+		}
+	}
+
 	tags = append(
 		tags,
 		fmt.Sprintf("request_op_code:%v", op.OpCode()),

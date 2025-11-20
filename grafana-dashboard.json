@@ -1,0 +1,283 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "mongobetween",
+    "title": "Mongobetween Proxy",
+    "tags": ["mongodb", "proxy", "mongobetween"],
+    "timezone": "browser",
+    "schemaVersion": 38,
+    "version": 6,
+    "refresh": "10s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Connection Pool - Open Connections",
+        "description": "Number of open connections from the Go driver to MongoDB",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+        "datasource": { "type": "prometheus", "uid": "cf1uco9obp1q8b" },
+        "targets": [
+          {
+            "datasource": { "type": "prometheus", "uid": "cf1uco9obp1q8b" },
+            "expr": "mongobetween_pool_open_connections",
+            "legendFormat": "Open Connections",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": { "mode": "palette-classic" },
+            "custom": {
+              "lineWidth": 2,
+              "fillOpacity": 10
+            },
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "Connection Pool - Checked Out",
+        "description": "Number of connections currently checked out from the Go driver connection pool",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+        "datasource": { "type": "prometheus", "uid": "cf1uco9obp1q8b" },
+        "targets": [
+          {
+            "datasource": { "type": "prometheus", "uid": "cf1uco9obp1q8b" },
+            "expr": "mongobetween_pool_checked_out_connections",
+            "legendFormat": "Checked Out",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": { "mode": "palette-classic" },
+            "custom": {
+              "lineWidth": 2,
+              "fillOpacity": 10
+            },
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "id": 7,
+        "title": "Client Connections by App",
+        "description": "Number of active connections between client applications and the proxy, grouped by app name and driver",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+        "datasource": { "type": "prometheus", "uid": "cf1uco9obp1q8b" },
+        "targets": [
+          {
+            "datasource": { "type": "prometheus", "uid": "cf1uco9obp1q8b" },
+            "expr": "mongobetween_client_connections_total - mongobetween_client_disconnections_total",
+            "legendFormat": "{{app_name}} ({{driver_name}})",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": { "mode": "palette-classic" },
+            "custom": {
+              "lineWidth": 2,
+              "fillOpacity": 10,
+              "drawStyle": "line",
+              "lineInterpolation": "linear",
+              "showPoints": "auto",
+              "pointSize": 5
+            },
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "id": 8,
+        "title": "Client Connections Table",
+        "description": "Number of active connections between client applications and the proxy, displayed as a table",
+        "type": "table",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+        "datasource": { "type": "prometheus", "uid": "cf1uco9obp1q8b" },
+        "targets": [
+          {
+            "datasource": { "type": "prometheus", "uid": "cf1uco9obp1q8b" },
+            "expr": "mongobetween_client_connections_total - mongobetween_client_disconnections_total",
+            "format": "table",
+            "instant": true,
+            "refId": "A"
+          }
+        ],
+        "transformations": [
+          {
+            "id": "organize",
+            "options": {
+              "excludeByName": {
+                "Time": true,
+                "__name__": true,
+                "instance": true,
+                "job": true,
+                "service": true,
+                "cluster": true
+              },
+              "renameByName": {
+                "Value": "Connections",
+                "app_name": "App Name",
+                "driver_name": "Driver"
+              }
+            }
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "displayMode": "auto"
+            }
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "Pool Events Rate",
+        "description": "Rate of Go driver connection pool events (ConnectionCreated, ConnectionReady, ConnectionClosed, ConnectionCheckOutStarted, ConnectionCheckedOut, ConnectionCheckedIn, ConnectionCheckOutFailed, ConnectionPoolCreated, ConnectionPoolCleared, ConnectionPoolClosed)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+        "datasource": { "type": "prometheus", "uid": "cf1uco9obp1q8b" },
+        "targets": [
+          {
+            "datasource": { "type": "prometheus", "uid": "cf1uco9obp1q8b" },
+            "expr": "rate(mongobetween_pool_event[1m])",
+            "legendFormat": "{{event_type}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": { "mode": "palette-classic" },
+            "custom": {
+              "lineWidth": 2,
+              "fillOpacity": 10
+            },
+            "unit": "ops"
+          }
+        }
+      },
+      {
+        "id": 4,
+        "title": "Active Cursors",
+        "description": "Number of open cursors being tracked for cursor-to-server mapping",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+        "datasource": { "type": "prometheus", "uid": "cf1uco9obp1q8b" },
+        "targets": [
+          {
+            "datasource": { "type": "prometheus", "uid": "cf1uco9obp1q8b" },
+            "expr": "mongobetween_cursors",
+            "legendFormat": "Active Cursors",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": { "mode": "palette-classic" },
+            "custom": {
+              "lineWidth": 2,
+              "fillOpacity": 10
+            },
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "id": 5,
+        "title": "StatsD Metrics Sent",
+        "description": "Rate of StatsD metrics being sent to Datadog",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 6, "x": 0, "y": 24 },
+        "datasource": { "type": "prometheus", "uid": "cf1uco9obp1q8b" },
+        "targets": [
+          {
+            "datasource": { "type": "prometheus", "uid": "cf1uco9obp1q8b" },
+            "expr": "rate(mongobetween_datadog_dogstatsd_client_metrics[1m])",
+            "legendFormat": "Metrics/sec",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": { "mode": "thresholds" },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "color": "green", "value": null }
+              ]
+            },
+            "unit": "ops"
+          }
+        },
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "justifyMode": "auto",
+          "orientation": "auto",
+          "reduceOptions": {
+            "calcs": ["lastNotNull"],
+            "fields": "",
+            "values": false
+          },
+          "textMode": "auto"
+        }
+      },
+      {
+        "id": 6,
+        "title": "Pool Events Total",
+        "description": "Total count of Go driver connection pool events by type, address, and reason",
+        "type": "table",
+        "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
+        "datasource": { "type": "prometheus", "uid": "cf1uco9obp1q8b" },
+        "targets": [
+          {
+            "datasource": { "type": "prometheus", "uid": "cf1uco9obp1q8b" },
+            "expr": "mongobetween_pool_event",
+            "format": "table",
+            "instant": true,
+            "refId": "A"
+          }
+        ],
+        "transformations": [
+          {
+            "id": "organize",
+            "options": {
+              "excludeByName": {
+                "Time": true,
+                "__name__": true,
+                "instance": true,
+                "job": true,
+                "service": true
+              },
+              "renameByName": {
+                "Value": "Count",
+                "event_type": "Event Type",
+                "address": "Address",
+                "reason": "Reason"
+              }
+            }
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "displayMode": "auto"
+            }
+          }
+        }
+      }
+    ],
+    "time": {
+      "from": "now-15m",
+      "to": "now"
+    }
+  },
+  "overwrite": true
+}

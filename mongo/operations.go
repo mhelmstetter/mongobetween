@@ -22,6 +22,12 @@ type TransactionDetails struct {
 	IsStartTransaction bool
 }
 
+type ClientInfo struct {
+	AppName       string
+	DriverName    string
+	DriverVersion string
+}
+
 type Operation interface {
 	fmt.Stringer
 	OpCode() wiremessage.OpCode
@@ -33,6 +39,7 @@ type Operation interface {
 	Unacknowledged() bool
 	CommandAndCollection() (Command, string)
 	TransactionDetails() *TransactionDetails
+	ClientInfo() *ClientInfo
 }
 
 // see https://github.com/mongodb/mongo-go-driver/blob/v1.7.2/x/mongo/driver/operation.go#L1361-L1426
@@ -115,6 +122,10 @@ func (o *opUnknown) Unacknowledged() bool {
 
 func (o *opUnknown) CommandAndCollection() (Command, string) {
 	return Unknown, ""
+}
+
+func (o *opUnknown) ClientInfo() *ClientInfo {
+	return nil
 }
 
 func (o *opUnknown) String() string {
@@ -224,6 +235,31 @@ func (q *opQuery) Unacknowledged() bool {
 
 func (q *opQuery) CommandAndCollection() (Command, string) {
 	return Find, q.fullCollectionName
+}
+
+func (q *opQuery) ClientInfo() *ClientInfo {
+	info := &ClientInfo{}
+
+	// Extract application name from query.client.application.name
+	if appName, ok := q.query.Lookup("client", "application", "name").StringValueOK(); ok {
+		info.AppName = appName
+	}
+
+	// Extract driver name from query.client.driver.name
+	if driverName, ok := q.query.Lookup("client", "driver", "name").StringValueOK(); ok {
+		info.DriverName = driverName
+	}
+
+	// Extract driver version from query.client.driver.version
+	if driverVersion, ok := q.query.Lookup("client", "driver", "version").StringValueOK(); ok {
+		info.DriverVersion = driverVersion
+	}
+
+	// Return if we found any client info
+	if info.AppName != "" || info.DriverName != "" {
+		return info
+	}
+	return nil
 }
 
 func (q *opQuery) String() string {
@@ -477,6 +513,35 @@ func (m *opMsg) TransactionDetails() *TransactionDetails {
 	return nil
 }
 
+func (m *opMsg) ClientInfo() *ClientInfo {
+	for _, section := range m.sections {
+		if single, ok := section.(*opMsgSectionSingle); ok {
+			info := &ClientInfo{}
+
+			// Extract application name - try both paths
+			if appName, ok := single.msg.Lookup("client", "application", "name").StringValueOK(); ok {
+				info.AppName = appName
+			}
+
+			// Extract driver name
+			if driverName, ok := single.msg.Lookup("client", "driver", "name").StringValueOK(); ok {
+				info.DriverName = driverName
+			}
+
+			// Extract driver version
+			if driverVersion, ok := single.msg.Lookup("client", "driver", "version").StringValueOK(); ok {
+				info.DriverVersion = driverVersion
+			}
+
+			// Return if we found any client info
+			if info.AppName != "" || info.DriverName != "" {
+				return info
+			}
+		}
+	}
+	return nil
+}
+
 func (m *opMsg) String() string {
 	var sections []string
 	for _, section := range m.sections {
@@ -580,6 +645,10 @@ func (r *opReply) CommandAndCollection() (Command, string) {
 	return Find, ""
 }
 
+func (r *opReply) ClientInfo() *ClientInfo {
+	return nil
+}
+
 func (r *opReply) String() string {
 	var documents []string
 	for _, document := range r.documents {
@@ -672,6 +741,10 @@ func (g *opGetMore) CommandAndCollection() (Command, string) {
 	return GetMore, g.fullCollectionName
 }
 
+func (g *opGetMore) ClientInfo() *ClientInfo {
+	return nil
+}
+
 func (g *opGetMore) String() string {
 	return fmt.Sprintf("{ OpGetMore fullCollectionName: %s, numberToReturn: %d, cursorID: %d }", g.fullCollectionName, g.numberToReturn, g.cursorID)
 }
@@ -757,6 +830,10 @@ func (u *opUpdate) CommandAndCollection() (Command, string) {
 	return Update, u.fullCollectionName
 }
 
+func (u *opUpdate) ClientInfo() *ClientInfo {
+	return nil
+}
+
 func (u *opUpdate) String() string {
 	return fmt.Sprintf("{ OpQuery fullCollectionName: %s, flags: %d, selector: %s, update: %s }", u.fullCollectionName, u.flags, u.selector.String(), u.update.String())
 }
@@ -835,6 +912,10 @@ func (i *opInsert) Unacknowledged() bool {
 
 func (i *opInsert) CommandAndCollection() (Command, string) {
 	return Insert, i.fullCollectionName
+}
+
+func (i *opInsert) ClientInfo() *ClientInfo {
+	return nil
 }
 
 func (i *opInsert) String() string {
@@ -924,6 +1005,10 @@ func (d *opDelete) CommandAndCollection() (Command, string) {
 	return Delete, d.fullCollectionName
 }
 
+func (d *opDelete) ClientInfo() *ClientInfo {
+	return nil
+}
+
 func (d *opDelete) String() string {
 	return fmt.Sprintf("{ OpDelete fullCollectionName: %s, flags: %d, selector: %s }", d.fullCollectionName, d.flags, d.selector.String())
 }
@@ -1000,6 +1085,10 @@ func (k *opKillCursors) Unacknowledged() bool {
 
 func (k *opKillCursors) CommandAndCollection() (Command, string) {
 	return Unknown, ""
+}
+
+func (k *opKillCursors) ClientInfo() *ClientInfo {
+	return nil
 }
 
 func (k *opKillCursors) String() string {
